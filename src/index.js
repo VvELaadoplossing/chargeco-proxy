@@ -16,9 +16,22 @@ const CAPTURE = new Set([
   "BootNotification",
 ]);
 
+// Cloudflare closes a WebSocket after ~100s with no data in either direction
+// (Free/Pro idle timeout). Keep well under that.
+const KEEPALIVE_MS = 30000;
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    // Only OCPP WebSocket upgrades on /v1/* are legitimate traffic. Everything
+    // else is internet noise hitting the public hostname (bots / residual scam
+    // traffic) — reject it rather than relay it to PlugChoice. This keeps the
+    // worker from acting as an open HTTP proxy.
+    if (request.headers.get("Upgrade") !== "websocket" || !url.pathname.startsWith("/v1/")) {
+      return new Response("Not found", { status: 404 });
+    }
+
     const base = env.PLUGCHOICE_WS || "https://proxy.plugchoice.com";
     const deviceId = url.pathname.split("/").filter(Boolean).pop() || "unknown";
     const target = base + url.pathname + url.search;
@@ -26,15 +39,6 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.set("Host", new URL(base).host);
-
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return fetch(target, {
-        method: request.method,
-        headers,
-        body: request.body,
-        redirect: "manual",
-      });
-    }
 
     const upstream = await fetch(target, { headers });
     const pcSocket = upstream.webSocket;
@@ -57,7 +61,21 @@ export default {
       try { onOutbound(e.data, deviceId, pendingStart, env, ctx, rawOn); } catch (_) {}
     });
 
+    // Keepalive: send a Heartbeat to PlugChoice every 30s. It's a valid
+    // charger->CSMS message; PlugChoice's reply flows back to the charger, which
+    // ignores the unknown message id. One injected message keeps BOTH legs warm
+    // and prevents Cloudflare's 100s idle-timeout from dropping the connection.
+    let kaN = 0;
+    const keepAlive = setInterval(() => {
+      try {
+        pcSocket.send(JSON.stringify([2, "ka-" + (++kaN), "Heartbeat", {}]));
+      } catch (_) {
+        clearInterval(keepAlive);
+      }
+    }, KEEPALIVE_MS);
+
     const closeBoth = () => {
+      clearInterval(keepAlive);
       try { charger.close(); } catch (_) {}
       try { pcSocket.close(); } catch (_) {}
     };
