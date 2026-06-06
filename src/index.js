@@ -24,6 +24,7 @@ export default {
     // else is internet noise hitting the public hostname — reject it instead of
     // relaying it to PlugChoice (don't be an open proxy). Fail fast, before we
     // open any upstream socket.
+    // Note that there is also a Cloudflare security rule in place blocking all but /v1/
     const isWebSocket = request.headers.get("Upgrade") === "websocket";
     const isOcppPath  = url.pathname.startsWith("/v1/");
     if (!isWebSocket || !isOcppPath) {
