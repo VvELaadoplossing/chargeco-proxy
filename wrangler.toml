@@ -1,0 +1,16 @@
+name = "chargeco-proxy"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# Attaches the worker to proxy.chargeco.nl and provisions the DNS record + cert.
+# The chargeco.nl zone must be active in Cloudflare (nameservers added) first.
+routes = [{ pattern = "proxy.chargeco.nl", custom_domain = true }]
+
+[vars]
+PLUGCHOICE_WS = "https://proxy.plugchoice.com"   # verify against PlugChoice "Get Proxy Servers"
+LOG_RAW = "false"                                 # flip to "true" only for short debug windows
+
+# Producer side of the data queue (the consumer worker binds the same queue).
+[[queues.producers]]
+binding = "DATA_QUEUE"
+queue   = "chargeco-data"
