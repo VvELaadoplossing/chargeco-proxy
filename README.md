@@ -42,9 +42,16 @@ storage. Chargers connect to `wss://proxy.chargeco.nl/v1/{deviceId}`.
   being JSON-parsed. Longer code, but the hot path is as fast as a bare relay.
 - **Capture can never break forwarding.** The inspection runs inside a try/catch,
   so a malformed frame or a queue hiccup can't interrupt the relay.
-- **No app-level keep-alive.** An earlier version pinged the charger with a fake
-  OCPP message; that was removed. The charger's own `WebSocketPingInterval` keeps
-  the connection alive, which is cleaner and correct.
+- **Application-level keepalive (every 45 s).** Cloudflare closes a WebSocket
+  after roughly 100 s with no data in either direction, so any quiet gap would
+  drop the link and force the charger to reconnect. To keep the connection warm,
+  the proxy sends a small frame to the charger every 45 s
+  (`[2,"InternalPing","Heartbeat",{}]`). This is the proven mechanism carried
+  over from the original proxy; the charger tolerates the unrecognised CALL and
+  the link stays up. (An earlier version of this README claimed the keepalive had
+  been removed in favour of the charger's own `WebSocketPingInterval` — that does
+  not match the deployed code. The 45 s keepalive is required and is present in
+  `src/index.js`.)
 
 ## Configuration (`wrangler.toml`)
 
@@ -58,9 +65,9 @@ storage. Chargers connect to `wss://proxy.chargeco.nl/v1/{deviceId}`.
 ## How it fits
 
 - Companion worker **chargeco-consumer** reads the queue and writes the structured
-  `sessions` and `intervals` rows to the shared D1 database `chargeco`. A
-  StopTransaction is split there into a session summary plus its 15-minute
-  interval rows — it is not stored as a single record.
+  `sessions` and `intervals` rows to the charger-side D1 database
+  `chargeco-charger-data`. A StopTransaction is split there into a session summary
+  plus its 15-minute interval rows — it is not stored as a single record.
 - Session energy is computed as the **sum of the interval kWh**, never
   meterStop - meterStart, because the meter register on these chargers is
   unreliable.
